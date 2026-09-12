@@ -1,5 +1,5 @@
 //
-//  GameScene.swift
+//  GameScene.thirdperson.swift
 //  Kamote Dash Shared
 //
 //  Created by Neville Aaron Alcantara on 9/10/26.
@@ -20,15 +20,15 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     private enum Config {
         static let laneCount = 3
 
-        static let roadTopWidthRatio: CGFloat = 0.46
-        static let roadBottomWidthRatio: CGFloat = 1.20
-        static let horizonYRatio: CGFloat = 0.66
-        static let playerYRatio: CGFloat = 0.25
+        static let roadTopWidthRatio: CGFloat = 0.66
+        static let roadBottomWidthRatio: CGFloat = 1.24
+        static let horizonYRatio: CGFloat = 0.64
+        static let playerYRatio: CGFloat = 0.18
 
         static let depthSpeed: CGFloat = 0.27
         static let entityStartDepth: CGFloat = 0.02
         static let passedPlayerDepth: CGFloat = 1.0
-        static let entityRemovalDepth: CGFloat = 1.26
+        static let entityRemovalDepth: CGFloat = 1.08
 
         static let spawnInterval: TimeInterval = 0.82
         static let swipeThreshold: CGFloat = 30
@@ -87,7 +87,6 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     private let hudBackdrop = SKShapeNode(rectOf: CGSize(width: 250, height: 92), cornerRadius: 16)
     private let coinLabel = SKLabelNode(fontNamed: "HelveticaNeue-Bold")
     private let kamoteLabel = SKLabelNode(fontNamed: "HelveticaNeue-Bold")
-    private var gameOverBackdrop: SKShapeNode?
     private var gameOverLabel: SKLabelNode?
     private var restartLabel: SKLabelNode?
 
@@ -174,8 +173,6 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
             lastSpawnTime = 0
         }
 
-        gameOverBackdrop?.removeFromParent()
-        gameOverBackdrop = nil
         gameOverLabel?.removeFromParent()
         gameOverLabel = nil
         restartLabel?.removeFromParent()
@@ -554,7 +551,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         }
 
         let overshoot = depth - 1
-        return playerY - overshoot * size.height * 2.35
+        return playerY - overshoot * size.height * 1.35
     }
 
     private func trapezoidPath(bottomLeft: CGPoint, bottomRight: CGPoint, topRight: CGPoint, topLeft: CGPoint) -> CGPath {
@@ -845,17 +842,8 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         for entity in activeCoins { entity.node.physicsBody = nil }
         for entity in activeKamote { entity.node.physicsBody = nil }
 
-        gameOverBackdrop?.removeFromParent()
         gameOverLabel?.removeFromParent()
         restartLabel?.removeFromParent()
-
-        let backdrop = SKShapeNode(rectOf: CGSize(width: size.width * 0.62, height: 220), cornerRadius: 18)
-        backdrop.fillColor = SKColor(white: 0, alpha: 0.42)
-        backdrop.strokeColor = .clear
-        backdrop.position = CGPoint(x: size.width * 0.5, y: size.height * 0.49)
-        backdrop.zPosition = 248
-        hudNode.addChild(backdrop)
-        gameOverBackdrop = backdrop
 
         let label = SKLabelNode(text: "Game Over")
         label.fontName = "HelveticaNeue-Bold"

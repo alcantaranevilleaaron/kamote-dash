@@ -327,14 +327,43 @@ Additional gameplay-specific success criteria:
 - The Kamote Bar creates a meaningful "one more run" mechanic.
 - The game feels distinct from a generic endless runner.
 
+### Camera Perspective
+
+**CONFIRMED FOR MVP**
+
+Kamote Dash uses a **third-person, behind-the-motorcycle perspective**.
+
+The camera follows the motorcycle from behind and slightly above, providing a forward-looking view of the road, traffic, collectibles, and environment.
+
+The motorcycle should remain visible in the lower portion of the screen while the road and environment extend toward the horizon.
+
+The perspective should communicate the feeling of actually riding a motorcycle through traffic rather than viewing the road from directly above.
+
+Key visual characteristics:
+
+- Motorcycle is visible as the player's primary entity.
+- Road extends toward a visible horizon.
+- Traffic appears ahead of the motorcycle.
+- Three lanes remain visually distinguishable.
+- Coins and kamote are visible as upcoming route choices.
+- The environment surrounds the road and provides a sense of forward movement.
+
+The reference experience is a third-person motorcycle endless runner, while the visual identity and environment should be unique to Kamote Dash.
+
 TECHNICAL DIRECTION
 ===================
 High-level guidance:
-- Target: iOS for MVP (confirmed by product intent and repo structure).
-- Prefer simple architecture and fast iteration; keep systems decoupled for future expansion.
+- Target platform: iOS
+- Existing technology: Swift + SpriteKit
+- Camera: Third-person, behind-the-motorcycle perspective
+- Gameplay: Three-lane endless runner
+- Environment: EDSA-inspired Metro Manila corridor
+- Initial route concept: Mall of Asia ↔ SM North EDSA
 
 Confirmed technical note:
 - The repository contains SpriteKit / iOS files (e.g., `GameScene.swift`). This indicates an existing, actionable engine choice in the repo; teams may continue with SpriteKit or choose another engine, but do not change technology without explicit product approval.
+
+The implementation should prioritize achieving the intended third-person gameplay experience while remaining practical within the existing SpriteKit architecture.
 
 Do NOT assume additional backend services or live infrastructure for MVP.
 
@@ -407,7 +436,7 @@ OPEN PRODUCT DECISIONS (TBD)
 =============================
 The following items are explicitly undecided and must be resolved before implementation or should be validated during design spikes:
 - Game engine/framework for final build (Confirmed: SpriteKit present in repo; decision whether to continue is TBD)
-- Camera perspective (third-person close / top-down / isometric) — TBD
+- Camera perspective: third-person, behind-the-motorcycle pseudo-3D view — Confirmed
 - Number of lanes vs continuous lateral movement — TBD
 - Exact scoring formula (distance vs kamote weighting) — TBD
 - Kamote scoring values and combo behavior — TBD
@@ -447,6 +476,7 @@ CHANGE LOG
 | 2026-09-12 | Core gameplay revised to Safe Riding vs Kamote Riding (traffic-rule risk/reward) | Product Owner moved design toward a unique Kamote Bar mechanic to create meaningful decisions |
 | 2026-09-12 | Coins introduced as reward for following traffic rules | Distinguish coins from kamote; coins represent responsible riding rewards |
 | 2026-09-12 | Kamote and Kamote Bar introduced as risk/difficulty mechanics | Kamote represents reckless riding and increases the Kamote Bar which affects difficulty |
+| 2026-09-12 | Camera perspective confirmed as third-person behind the motorcycle | Product Owner confirmed the target gameplay composition should feel like riding forward through traffic |
 
 INSTRUCTIONS FOR AI CODING AGENTS
 =================================
