@@ -19,34 +19,23 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
 
     private enum Config {
         static let laneCount = 3
-
-        static let roadTopWidthRatio: CGFloat = 0.46
-        static let roadBottomWidthRatio: CGFloat = 1.20
-        static let horizonYRatio: CGFloat = 0.66
-        static let playerYRatio: CGFloat = 0.25
-
-        static let depthSpeed: CGFloat = 0.27
+        static let roadTopWidthRatio: CGFloat = 0.28
+        static let roadBottomWidthRatio: CGFloat = 0.96
+        static let horizonYRatio: CGFloat = 0.60
+        static let playerYRatio: CGFloat = 0.13
+        static let depthSpeed: CGFloat = 0.24
+        static let roadAccentRemovalDepth: CGFloat = 1.28
         static let entityStartDepth: CGFloat = 0.02
-        static let passedPlayerDepth: CGFloat = 1.0
-        static let entityRemovalDepth: CGFloat = 1.26
-
-        static let spawnInterval: TimeInterval = 0.82
+        static let entityPassedPlayerDepth: CGFloat = 1.04
+        static let entityRemovalDepth: CGFloat = 1.34
+        static let spawnInterval: TimeInterval = 0.98
         static let swipeThreshold: CGFloat = 30
-        static let playerMoveDuration: TimeInterval = 0.11
-        static let playerScale: CGFloat = 1.48
+        static let playerMoveDuration: TimeInterval = 0.14
+        static let playerScale: CGFloat = 0.94
     }
 
-    private enum EntityKind {
-        case traffic
-        case coin
-        case kamote
-    }
-
-    private enum AccentPlacement {
-        case divider(Int)
-        case roadsideLeft
-        case roadsideRight
-    }
+    private enum EntityKind { case traffic, coin, kamote }
+    private enum AccentPlacement { case divider(Int), roadsideLeft, roadsideRight }
 
     private final class DepthEntity {
         let node: SKNode
@@ -84,10 +73,8 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     private let worldNode = SKNode()
     private let hudNode = SKNode()
 
-    private let hudBackdrop = SKShapeNode(rectOf: CGSize(width: 250, height: 92), cornerRadius: 16)
     private let coinLabel = SKLabelNode(fontNamed: "HelveticaNeue-Bold")
     private let kamoteLabel = SKLabelNode(fontNamed: "HelveticaNeue-Bold")
-    private var gameOverBackdrop: SKShapeNode?
     private var gameOverLabel: SKLabelNode?
     private var restartLabel: SKLabelNode?
 
@@ -98,7 +85,6 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
 
     private var coinCount = 0
     private var kamoteCount = 0
-    private var kamoteForFutureBar = 0
 
     private var horizonY: CGFloat = 0
     private var playerY: CGFloat = 0
@@ -107,10 +93,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
 
     private var roadSurface = SKShapeNode()
     private var roadHaze = SKShapeNode()
-    private var skylineNode = SKNode()
-    private var environmentNode = SKNode()
     private var roadAccents: [RoadAccent] = []
-
     private var activeTraffic: [DepthEntity] = []
     private var activeCoins: [DepthEntity] = []
     private var activeKamote: [DepthEntity] = []
@@ -122,9 +105,9 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
 
     override func didMove(to view: SKView) {
         super.didMove(to: view)
+        backgroundColor = SKColor(red: 0.70, green: 0.80, blue: 0.88, alpha: 1)
         physicsWorld.gravity = .zero
         physicsWorld.contactDelegate = self
-        backgroundColor = SKColor(red: 0.66, green: 0.77, blue: 0.86, alpha: 1)
 
         if worldNode.parent == nil { addChild(worldNode) }
         if hudNode.parent == nil { addChild(hudNode) }
@@ -139,8 +122,6 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     }
 
     override func update(_ currentTime: TimeInterval) {
-        guard !isGameOver else { return }
-
         if lastUpdateTime == 0 {
             lastUpdateTime = currentTime
             return
@@ -148,14 +129,14 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
 
         let dt = CGFloat(min(currentTime - lastUpdateTime, 1.0 / 20.0))
         lastUpdateTime = currentTime
-
         let depthAdvance = Config.depthSpeed * dt
+
         updateRoadAccents(depthAdvance: depthAdvance)
         updateEntities(&activeTraffic, depthAdvance: depthAdvance)
         updateEntities(&activeCoins, depthAdvance: depthAdvance)
         updateEntities(&activeKamote, depthAdvance: depthAdvance)
 
-        if currentTime - lastSpawnTime >= Config.spawnInterval {
+        if !isGameOver, currentTime - lastSpawnTime >= Config.spawnInterval {
             lastSpawnTime = currentTime
             spawnEncounter()
         }
@@ -166,7 +147,6 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
             isGameOver = false
             coinCount = 0
             kamoteCount = 0
-            kamoteForFutureBar = 0
             currentLane = 1
             touchStartPoint = nil
             touchConsumedSwipe = false
@@ -174,13 +154,8 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
             lastSpawnTime = 0
         }
 
-        gameOverBackdrop?.removeFromParent()
-        gameOverBackdrop = nil
-        gameOverLabel?.removeFromParent()
-        gameOverLabel = nil
-        restartLabel?.removeFromParent()
-        restartLabel = nil
-
+        gameOverLabel?.removeFromParent(); gameOverLabel = nil
+        restartLabel?.removeFromParent(); restartLabel = nil
         worldNode.removeAllChildren()
         hudNode.removeAllChildren()
         roadAccents.removeAll()
@@ -189,7 +164,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         activeKamote.removeAll()
 
         setupPerspectiveMetrics()
-        setupBackdropAndEnvironment()
+        setupBackdrop()
         setupRoadSurface()
         setupRoadAccents()
         setupPlayer()
@@ -205,109 +180,36 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         roadBottomWidth = size.width * Config.roadBottomWidthRatio
     }
 
-    private func setupBackdropAndEnvironment() {
-        skylineNode.removeAllChildren()
-        environmentNode.removeAllChildren()
-
-        let sky = SKSpriteNode(color: SKColor(red: 0.43, green: 0.70, blue: 0.96, alpha: 1), size: size)
-        sky.anchorPoint = CGPoint(x: 0, y: 0)
-        sky.position = .zero
-        sky.zPosition = -70
-        worldNode.addChild(sky)
-
-        let haze = SKShapeNode(rectOf: CGSize(width: size.width * 1.2, height: 138), cornerRadius: 34)
-        haze.fillColor = SKColor(white: 1, alpha: 0.15)
+    private func setupBackdrop() {
+        let haze = SKShapeNode(rectOf: CGSize(width: size.width * 1.15, height: 110), cornerRadius: 34)
+        haze.fillColor = SKColor(white: 1, alpha: 0.18)
         haze.strokeColor = .clear
-        haze.position = CGPoint(x: size.width * 0.5, y: horizonY + 28)
-        haze.zPosition = -45
+        haze.position = CGPoint(x: size.width * 0.5, y: horizonY + 20)
+        haze.zPosition = -40
         worldNode.addChild(haze)
 
-        skylineNode.zPosition = -40
-        let baseY = horizonY + 8
-        var leftX: CGFloat = -8
-        for (w, h, alpha) in [(110.0, 280.0, 0.32), (84.0, 210.0, 0.25), (132.0, 330.0, 0.30), (94.0, 230.0, 0.23)] {
-            let building = SKSpriteNode(color: SKColor(red: 0.47, green: 0.43, blue: 0.55, alpha: alpha), size: CGSize(width: w, height: h))
-            building.position = CGPoint(x: leftX + CGFloat(w) * 0.5, y: baseY + CGFloat(h) * 0.5)
-            skylineNode.addChild(building)
-            leftX += CGFloat(w) + 10
+        let skyline = SKNode()
+        skyline.zPosition = -35
+        let baseY = horizonY + 10
+        let leftBuildings: [(CGFloat, CGFloat, CGFloat)] = [(42, 140, 0.30), (72, 180, 0.24), (56, 110, 0.18), (84, 210, 0.28)]
+        var x: CGFloat = 36
+        for (w, h, alpha) in leftBuildings {
+            let building = SKSpriteNode(color: SKColor(red: 0.45, green: 0.40, blue: 0.42, alpha: alpha), size: CGSize(width: w, height: h))
+            building.position = CGPoint(x: x, y: baseY + h * 0.5)
+            skyline.addChild(building)
+            x += w + 12
         }
 
-        var rightX = size.width + 8
-        for (w, h, alpha) in [(126.0, 340.0, 0.31), (86.0, 215.0, 0.25), (116.0, 285.0, 0.29), (78.0, 185.0, 0.22)] {
-            let building = SKSpriteNode(color: SKColor(red: 0.45, green: 0.43, blue: 0.58, alpha: alpha), size: CGSize(width: w, height: h))
-            building.position = CGPoint(x: rightX - CGFloat(w) * 0.5, y: baseY + CGFloat(h) * 0.5)
-            skylineNode.addChild(building)
-            rightX -= CGFloat(w) + 10
-        }
-        worldNode.addChild(skylineNode)
-
-        environmentNode.zPosition = -10
-
-        let horizonLeft = (size.width - roadTopWidth) * 0.5
-        let horizonRight = horizonLeft + roadTopWidth
-        let nearWidth = roadWidth(at: 0.92)
-        let nearLeft = (size.width - nearWidth) * 0.5
-        let nearRight = nearLeft + nearWidth
-
-        let leftWalk = SKShapeNode(path: trapezoidPath(
-            bottomLeft: CGPoint(x: 0, y: 0),
-            bottomRight: CGPoint(x: max(nearLeft + 28, 0), y: 0),
-            topRight: CGPoint(x: horizonLeft - 20, y: horizonY),
-            topLeft: CGPoint(x: 0, y: horizonY)
-        ))
-        leftWalk.fillColor = SKColor(red: 0.50, green: 0.52, blue: 0.52, alpha: 1)
-        leftWalk.strokeColor = .clear
-        environmentNode.addChild(leftWalk)
-
-        let rightWalk = SKShapeNode(path: trapezoidPath(
-            bottomLeft: CGPoint(x: min(nearRight - 28, size.width), y: 0),
-            bottomRight: CGPoint(x: size.width, y: 0),
-            topRight: CGPoint(x: size.width, y: horizonY),
-            topLeft: CGPoint(x: horizonRight + 20, y: horizonY)
-        ))
-        rightWalk.fillColor = SKColor(red: 0.50, green: 0.52, blue: 0.52, alpha: 1)
-        rightWalk.strokeColor = .clear
-        environmentNode.addChild(rightWalk)
-
-        for depth in stride(from: CGFloat(0.12), through: CGFloat(0.95), by: CGFloat(0.14)) {
-            addRoadsideMarker(depth: depth, isLeft: true)
-            addRoadsideMarker(depth: depth + 0.06, isLeft: false)
+        let rightBuildings: [(CGFloat, CGFloat, CGFloat)] = [(56, 190, 0.22), (72, 150, 0.26), (48, 240, 0.20)]
+        x = size.width - 40
+        for (w, h, alpha) in rightBuildings.reversed() {
+            let building = SKSpriteNode(color: SKColor(red: 0.45, green: 0.40, blue: 0.42, alpha: alpha), size: CGSize(width: w, height: h))
+            building.position = CGPoint(x: x - w * 0.5, y: baseY + h * 0.5)
+            skyline.addChild(building)
+            x -= w + 14
         }
 
-        worldNode.addChild(environmentNode)
-    }
-
-    private func addRoadsideMarker(depth: CGFloat, isLeft: Bool) {
-        let clampedDepth = min(max(depth, 0.04), 0.98)
-        let markerScale = perspectiveScale(for: clampedDepth)
-        let edgeX = roadsideX(isLeft: isLeft, depth: clampedDepth)
-        let yPosition = y(for: clampedDepth)
-
-        let pole = SKSpriteNode(color: SKColor(red: 0.28, green: 0.30, blue: 0.34, alpha: 1), size: CGSize(width: 5, height: 82))
-        pole.anchorPoint = CGPoint(x: 0.5, y: 0)
-        pole.position = CGPoint(x: edgeX + (isLeft ? -20 : 20), y: yPosition)
-        pole.setScale(markerScale * 0.62)
-        pole.zPosition = 4 + clampedDepth * 12
-        environmentNode.addChild(pole)
-
-        let sign = SKShapeNode(rectOf: CGSize(width: 74, height: 32), cornerRadius: 3)
-        sign.fillColor = SKColor(red: 0.03, green: 0.42, blue: 0.30, alpha: 1)
-        sign.strokeColor = SKColor(white: 0.9, alpha: 0.65)
-        sign.lineWidth = 2
-        sign.position = CGPoint(x: pole.position.x + (isLeft ? -34 : 34) * markerScale, y: yPosition + 74 * markerScale)
-        sign.setScale(markerScale * 0.75)
-        sign.zPosition = pole.zPosition + 1
-        environmentNode.addChild(sign)
-
-        if clampedDepth > 0.35 {
-            let tree = SKShapeNode(circleOfRadius: 22)
-            tree.fillColor = SKColor(red: 0.23, green: 0.55, blue: 0.20, alpha: 1)
-            tree.strokeColor = .clear
-            tree.position = CGPoint(x: edgeX + (isLeft ? -76 : 76), y: yPosition + 20 * markerScale)
-            tree.setScale(markerScale)
-            tree.zPosition = pole.zPosition
-            environmentNode.addChild(tree)
-        }
+        worldNode.addChild(skyline)
     }
 
     private func setupRoadSurface() {
@@ -328,42 +230,40 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         roadSurface.zPosition = -5
         worldNode.addChild(roadSurface)
 
-        roadHaze = SKShapeNode(rectOf: CGSize(width: roadTopWidth * 1.15, height: 64), cornerRadius: 20)
+        roadHaze = SKShapeNode(rectOf: CGSize(width: roadTopWidth * 1.2, height: 64), cornerRadius: 20)
         roadHaze.fillColor = SKColor(white: 1, alpha: 0.08)
         roadHaze.strokeColor = .clear
-        roadHaze.position = CGPoint(x: size.width * 0.5, y: horizonY + 5)
+        roadHaze.position = CGPoint(x: size.width * 0.5, y: horizonY + 6)
         roadHaze.zPosition = -4
         worldNode.addChild(roadHaze)
     }
 
     private func setupRoadAccents() {
-        roadAccents.removeAll()
-
-        let dividerCount = 2
-        let dashCount = 18
-        for divider in 1...dividerCount {
-            for index in 0..<dashCount {
-                let dash = SKSpriteNode(color: SKColor(red: 0.96, green: 0.96, blue: 0.92, alpha: 1), size: CGSize(width: 5, height: 34))
-                let depth = CGFloat(index) / CGFloat(dashCount)
-                let accent = RoadAccent(node: dash, placement: .divider(divider), depth: depth)
+        let dividerCount = 20
+        let dividerStep = Config.roadAccentRemovalDepth / CGFloat(dividerCount)
+        for divider in 1...2 {
+            for index in 0..<dividerCount {
+                let dash = SKSpriteNode(color: SKColor(red: 0.95, green: 0.95, blue: 0.92, alpha: 1), size: CGSize(width: 5, height: 32))
+                dash.zPosition = 1
+                let accent = RoadAccent(node: dash, placement: .divider(divider), depth: CGFloat(index) * dividerStep)
                 roadAccents.append(accent)
                 worldNode.addChild(dash)
                 applyPerspective(to: accent)
             }
         }
 
-        let roadsideCount = 14
+        let roadsideCount = 16
+        let roadsideStep = Config.roadAccentRemovalDepth / CGFloat(roadsideCount)
         for index in 0..<roadsideCount {
-            let baseDepth = CGFloat(index) / CGFloat(roadsideCount)
-
-            let leftMarker = SKSpriteNode(color: SKColor(red: 0.00, green: 0.36, blue: 0.63, alpha: 1), size: CGSize(width: 26, height: 8))
-            let leftAccent = RoadAccent(node: leftMarker, placement: .roadsideLeft, depth: baseDepth)
+            let depth = CGFloat(index) * roadsideStep
+            let leftMarker = SKSpriteNode(color: SKColor(red: 0.0, green: 0.36, blue: 0.63, alpha: 1), size: CGSize(width: 26, height: 8))
+            let leftAccent = RoadAccent(node: leftMarker, placement: .roadsideLeft, depth: depth)
             roadAccents.append(leftAccent)
             worldNode.addChild(leftMarker)
             applyPerspective(to: leftAccent)
 
-            let rightMarker = SKSpriteNode(color: SKColor(red: 0.00, green: 0.36, blue: 0.63, alpha: 1), size: CGSize(width: 26, height: 8))
-            let rightAccent = RoadAccent(node: rightMarker, placement: .roadsideRight, depth: baseDepth + 0.5 / CGFloat(roadsideCount))
+            let rightMarker = SKSpriteNode(color: SKColor(red: 0.0, green: 0.36, blue: 0.63, alpha: 1), size: CGSize(width: 26, height: 8))
+            let rightAccent = RoadAccent(node: rightMarker, placement: .roadsideRight, depth: depth + roadsideStep * 0.5)
             roadAccents.append(rightAccent)
             worldNode.addChild(rightMarker)
             applyPerspective(to: rightAccent)
@@ -374,84 +274,53 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         player.removeFromParent()
         playerShadow.removeFromParent()
 
-        playerShadow = SKShapeNode(ellipseOf: CGSize(width: 128, height: 32))
+        playerShadow = SKShapeNode(ellipseOf: CGSize(width: 62, height: 14))
         playerShadow.fillColor = SKColor(white: 0, alpha: 0.22)
         playerShadow.strokeColor = .clear
         playerShadow.zPosition = 55
         worldNode.addChild(playerShadow)
 
-        player = SKSpriteNode(color: .clear, size: CGSize(width: 112, height: 172))
+        player = SKSpriteNode(color: .clear, size: CGSize(width: 60, height: 98))
         player.zPosition = 60
         player.name = "player"
 
-        let rearWheel = SKShapeNode(circleOfRadius: 18)
+        let rearWheel = SKShapeNode(circleOfRadius: 11)
         rearWheel.fillColor = SKColor(white: 0.06, alpha: 1)
         rearWheel.strokeColor = SKColor(white: 0.35, alpha: 1)
-        rearWheel.position = CGPoint(x: 0, y: -54)
+        rearWheel.position = CGPoint(x: 0, y: -31)
         player.addChild(rearWheel)
 
-        let frontWheel = SKShapeNode(circleOfRadius: 15)
+        let frontWheel = SKShapeNode(circleOfRadius: 9)
         frontWheel.fillColor = SKColor(white: 0.06, alpha: 1)
         frontWheel.strokeColor = SKColor(white: 0.35, alpha: 1)
-        frontWheel.position = CGPoint(x: 0, y: 56)
+        frontWheel.position = CGPoint(x: 0, y: 33)
         player.addChild(frontWheel)
 
-        let body = SKShapeNode(rectOf: CGSize(width: 46, height: 104), cornerRadius: 12)
+        let body = SKShapeNode(rectOf: CGSize(width: 24, height: 56), cornerRadius: 7)
         body.fillColor = SKColor(red: 0.82, green: 0.07, blue: 0.13, alpha: 1)
         body.strokeColor = SKColor(red: 0.48, green: 0.03, blue: 0.07, alpha: 1)
-        body.position = CGPoint(x: 0, y: 6)
+        body.position = CGPoint(x: 0, y: 4)
         player.addChild(body)
 
-        let seat = SKShapeNode(rectOf: CGSize(width: 30, height: 34), cornerRadius: 7)
+        let seat = SKShapeNode(rectOf: CGSize(width: 18, height: 20), cornerRadius: 5)
         seat.fillColor = SKColor(white: 0.16, alpha: 1)
         seat.strokeColor = .clear
-        seat.position = CGPoint(x: 0, y: -18)
+        seat.position = CGPoint(x: 0, y: -8)
         player.addChild(seat)
 
-        let riderTorso = SKShapeNode(rectOf: CGSize(width: 46, height: 34), cornerRadius: 9)
-        riderTorso.fillColor = SKColor(white: 0.10, alpha: 1)
-        riderTorso.strokeColor = .clear
-        riderTorso.position = CGPoint(x: 0, y: 2)
-        player.addChild(riderTorso)
-
-        let helmet = SKShapeNode(circleOfRadius: 20)
-        helmet.fillColor = SKColor(red: 0.93, green: 0.10, blue: 0.12, alpha: 1)
-        helmet.strokeColor = SKColor(white: 0.05, alpha: 0.45)
-        helmet.lineWidth = 3
-        helmet.position = CGPoint(x: 0, y: 34)
-        player.addChild(helmet)
-
-        let visor = SKShapeNode(rectOf: CGSize(width: 30, height: 8), cornerRadius: 3)
-        visor.fillColor = SKColor(white: 0.08, alpha: 0.72)
-        visor.strokeColor = .clear
-        visor.position = CGPoint(x: 0, y: 30)
-        helmet.addChild(visor)
-
-        let handle = SKShapeNode(rectOf: CGSize(width: 58, height: 7), cornerRadius: 2)
+        let handle = SKShapeNode(rectOf: CGSize(width: 28, height: 4), cornerRadius: 2)
         handle.fillColor = SKColor(white: 0.80, alpha: 1)
         handle.strokeColor = .clear
-        handle.position = CGPoint(x: 0, y: 66)
+        handle.position = CGPoint(x: 0, y: 40)
         player.addChild(handle)
 
-        let leftMirror = SKShapeNode(rectOf: CGSize(width: 16, height: 10), cornerRadius: 3)
-        leftMirror.fillColor = SKColor(red: 0.78, green: 0.90, blue: 1.0, alpha: 1)
-        leftMirror.strokeColor = SKColor(white: 0.25, alpha: 1)
-        leftMirror.position = CGPoint(x: -40, y: 69)
-        player.addChild(leftMirror)
-
-        let rightMirror = SKShapeNode(rectOf: CGSize(width: 16, height: 10), cornerRadius: 3)
-        rightMirror.fillColor = SKColor(red: 0.78, green: 0.90, blue: 1.0, alpha: 1)
-        rightMirror.strokeColor = SKColor(white: 0.25, alpha: 1)
-        rightMirror.position = CGPoint(x: 40, y: 69)
-        player.addChild(rightMirror)
-
-        let windshield = SKShapeNode(rectOf: CGSize(width: 26, height: 24), cornerRadius: 5)
+        let windshield = SKShapeNode(rectOf: CGSize(width: 14, height: 16), cornerRadius: 4)
         windshield.fillColor = SKColor(white: 0.90, alpha: 0.45)
         windshield.strokeColor = .clear
-        windshield.position = CGPoint(x: 0, y: 45)
+        windshield.position = CGPoint(x: 0, y: 22)
         player.addChild(windshield)
 
-        player.physicsBody = SKPhysicsBody(rectangleOf: CGSize(width: 50, height: 112))
+        player.physicsBody = SKPhysicsBody(rectangleOf: CGSize(width: 34, height: 70))
         player.physicsBody?.isDynamic = true
         player.physicsBody?.affectedByGravity = false
         player.physicsBody?.allowsRotation = false
@@ -460,22 +329,17 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         player.physicsBody?.collisionBitMask = PhysicsCategory.none
 
         worldNode.addChild(player)
-        updatePlayerPosition()
+        updatePlayerPosition(animated: false)
     }
 
     private func setupHUD() {
-        hudBackdrop.fillColor = SKColor(white: 0, alpha: 0.34)
-        hudBackdrop.strokeColor = .clear
-        hudBackdrop.zPosition = 199
-        hudNode.addChild(hudBackdrop)
-
-        coinLabel.fontSize = 24
+        coinLabel.fontSize = 18
         coinLabel.fontColor = .white
         coinLabel.horizontalAlignmentMode = .left
         coinLabel.zPosition = 200
         hudNode.addChild(coinLabel)
 
-        kamoteLabel.fontSize = 24
+        kamoteLabel.fontSize = 18
         kamoteLabel.fontColor = SKColor(red: 0.93, green: 0.76, blue: 1.0, alpha: 1)
         kamoteLabel.horizontalAlignmentMode = .left
         kamoteLabel.zPosition = 200
@@ -485,19 +349,14 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     private func layoutHUD() {
         let safeTop: CGFloat
         #if os(iOS) || os(tvOS)
-        if let view {
-            safeTop = view.safeAreaInsets.top * (size.height / max(view.bounds.height, 1))
-        } else {
-            safeTop = 0
-        }
+        safeTop = view?.safeAreaInsets.top ?? 0
         #else
         safeTop = 0
         #endif
 
-        let topY = size.height - safeTop - 30
-        coinLabel.position = CGPoint(x: 18, y: topY)
-        kamoteLabel.position = CGPoint(x: 18, y: topY - 32)
-        hudBackdrop.position = CGPoint(x: 132, y: topY - 16)
+        let topY = size.height - safeTop - 18
+        coinLabel.position = CGPoint(x: 16, y: topY)
+        kamoteLabel.position = CGPoint(x: 16, y: topY - 24)
     }
 
     private func updateHUDText() {
@@ -513,6 +372,51 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     private func y(for depth: CGFloat) -> CGFloat {
         let t = easedDepth(depth)
         return horizonY + (playerY - horizonY) * t
+    }
+
+    private func entityApproachProgress(for depth: CGFloat) -> CGFloat {
+        let span = max(1 - Config.entityStartDepth, 0.001)
+        return min(max((depth - Config.entityStartDepth) / span, 0), 1)
+    }
+
+    private func entityExitProgress(for depth: CGFloat) -> CGFloat {
+        let span = max(Config.entityRemovalDepth - 1, 0.001)
+        return min(max((depth - 1) / span, 0), 1)
+    }
+
+    private func roadAccentApproachProgress(for depth: CGFloat) -> CGFloat {
+        min(max(depth, 0), 1)
+    }
+
+    private func roadAccentExitProgress(for depth: CGFloat) -> CGFloat {
+        let span = max(Config.roadAccentRemovalDepth - 1, 0.001)
+        return min(max((depth - 1) / span, 0), 1)
+    }
+
+    private func entityY(for depth: CGFloat) -> CGFloat {
+        if depth <= 1 {
+            let t = easedDepth(min(max(depth, Config.entityStartDepth), 1))
+            return horizonY + (playerY - horizonY) * t
+        }
+
+        let exitDistance = playerY + max(size.height * 0.12, 96)
+        return playerY - entityExitProgress(for: depth) * exitDistance
+    }
+
+    private func roadAccentY(for depth: CGFloat) -> CGFloat {
+        if depth <= 1 {
+            let t = easedDepth(roadAccentApproachProgress(for: depth))
+            return horizonY + (playerY - horizonY) * t
+        }
+
+        let exitDistance = playerY + max(size.height * 0.10, 84)
+        return playerY - roadAccentExitProgress(for: depth) * exitDistance
+    }
+
+    private func roadAccentScale(for accent: RoadAccent) -> CGFloat {
+        let approachScale = 0.42 + easedDepth(roadAccentApproachProgress(for: accent.depth)) * 1.05
+        let exitScale = approachScale + roadAccentExitProgress(for: accent.depth) * 0.10
+        return exitScale
     }
 
     private func laneX(for lane: Int, depth: CGFloat) -> CGFloat {
@@ -548,13 +452,21 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         0.42 + easedDepth(depth) * 1.05
     }
 
-    private func entityY(for depth: CGFloat) -> CGFloat {
-        if depth <= 1 {
-            return y(for: depth)
+    private func entityScale(for entity: DepthEntity) -> CGFloat {
+        let approachScale = 0.18 + entityApproachProgress(for: entity.depth) * 0.48
+        let exitScale = approachScale + entityExitProgress(for: entity.depth) * 0.08
+
+        let kindMultiplier: CGFloat
+        switch entity.kind {
+        case .traffic:
+            kindMultiplier = 1.0
+        case .coin:
+            kindMultiplier = 0.82
+        case .kamote:
+            kindMultiplier = 0.86
         }
 
-        let overshoot = depth - 1
-        return playerY - overshoot * size.height * 2.35
+        return exitScale * kindMultiplier
     }
 
     private func trapezoidPath(bottomLeft: CGPoint, bottomRight: CGPoint, topRight: CGPoint, topLeft: CGPoint) -> CGPath {
@@ -570,32 +482,34 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     private func updateRoadAccents(depthAdvance: CGFloat) {
         for accent in roadAccents {
             accent.depth += depthAdvance
-            if accent.depth >= 1 { accent.depth -= 1 }
+            if accent.depth >= Config.roadAccentRemovalDepth {
+                accent.depth -= Config.roadAccentRemovalDepth
+            }
             applyPerspective(to: accent)
         }
     }
 
     private func applyPerspective(to accent: RoadAccent) {
-        let depth = min(max(accent.depth, 0), 1)
-        let yPosition = y(for: depth)
-        let scale = perspectiveScale(for: depth)
+        let laneDepth = min(max(accent.depth, 0), 1)
+        let scale = roadAccentScale(for: accent)
+        let yPosition = roadAccentY(for: accent.depth)
 
         switch accent.placement {
         case .divider(let divider):
-            accent.node.position = CGPoint(x: dividerX(for: divider, depth: depth), y: yPosition)
-            accent.node.setScale(scale * 0.60)
-            accent.node.alpha = 0.25 + depth * 0.75
-            accent.node.zPosition = 1 + depth * 4
+            accent.node.position = CGPoint(x: dividerX(for: divider, depth: laneDepth), y: yPosition)
+            accent.node.setScale(scale * 0.62)
+            accent.node.alpha = 0.22 + roadAccentApproachProgress(for: accent.depth) * 0.76
+            accent.node.zPosition = 1 + (roadAccentApproachProgress(for: accent.depth) + roadAccentExitProgress(for: accent.depth) * 0.20) * 4
         case .roadsideLeft:
-            accent.node.position = CGPoint(x: roadsideX(isLeft: true, depth: depth), y: yPosition)
-            accent.node.setScale(scale * 0.52)
-            accent.node.alpha = 0.20 + depth * 0.70
-            accent.node.zPosition = 0 + depth * 3
+            accent.node.position = CGPoint(x: roadsideX(isLeft: true, depth: laneDepth), y: yPosition)
+            accent.node.setScale(scale * 0.50)
+            accent.node.alpha = 0.18 + roadAccentApproachProgress(for: accent.depth) * 0.72
+            accent.node.zPosition = (roadAccentApproachProgress(for: accent.depth) + roadAccentExitProgress(for: accent.depth) * 0.20) * 3
         case .roadsideRight:
-            accent.node.position = CGPoint(x: roadsideX(isLeft: false, depth: depth), y: yPosition)
-            accent.node.setScale(scale * 0.52)
-            accent.node.alpha = 0.20 + depth * 0.70
-            accent.node.zPosition = 0 + depth * 3
+            accent.node.position = CGPoint(x: roadsideX(isLeft: false, depth: laneDepth), y: yPosition)
+            accent.node.setScale(scale * 0.50)
+            accent.node.alpha = 0.18 + roadAccentApproachProgress(for: accent.depth) * 0.72
+            accent.node.zPosition = (roadAccentApproachProgress(for: accent.depth) + roadAccentExitProgress(for: accent.depth) * 0.20) * 3
         }
     }
 
@@ -604,166 +518,135 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
             let entity = entities[index]
             entity.depth += depthAdvance
 
-            if entity.depth >= Config.entityRemovalDepth {
-                deactivate(entity)
-                entity.node.removeFromParent()
-                entities.remove(at: index)
-                continue
-            }
+            applyPerspective(to: entity)
 
-            if entity.depth >= Config.passedPlayerDepth, !entity.hasPassedPlayer {
+            if !entity.hasPassedPlayer,
+               entity.depth >= Config.entityPassedPlayerDepth,
+               entity.node.frame.maxY < player.frame.minY - 8 {
                 entity.hasPassedPlayer = true
                 deactivate(entity)
             }
 
-            applyPerspective(to: entity)
+            if entity.depth >= Config.entityRemovalDepth || entity.node.frame.maxY < -40 {
+                deactivate(entity)
+                entity.node.removeFromParent()
+                entities.remove(at: index)
+            }
         }
     }
 
     private func deactivate(_ entity: DepthEntity) {
         entity.node.physicsBody = nil
         entity.node.name = nil
-        for child in entity.node.children {
-            child.physicsBody = nil
-            child.name = nil
-        }
     }
 
     private func deactivateAndRemove(_ node: SKNode) {
         node.physicsBody = nil
         node.name = nil
-        for child in node.children {
-            child.physicsBody = nil
-            child.name = nil
-        }
         node.removeFromParent()
     }
 
     private func applyPerspective(to entity: DepthEntity) {
-        let depthForRoad = min(max(entity.depth, 0), 1)
-        let yPosition = entityY(for: entity.depth)
-        let xPosition: CGFloat
+        let laneDepth = min(max(entity.depth, Config.entityStartDepth), 1)
+        let scale = entityScale(for: entity)
 
+        let xPosition: CGFloat
         switch entity.kind {
         case .traffic, .coin:
-            xPosition = laneX(for: entity.lane, depth: depthForRoad)
+            xPosition = laneX(for: entity.lane, depth: laneDepth)
         case .kamote:
-            xPosition = laneSplitX(leftLane: entity.lane, depth: depthForRoad)
+            xPosition = laneSplitX(leftLane: entity.lane, depth: laneDepth)
         }
 
-        let scale = perspectiveScale(for: depthForRoad)
-        entity.node.position = CGPoint(x: xPosition, y: yPosition)
+        entity.node.position = CGPoint(x: xPosition, y: entityY(for: entity.depth))
         entity.node.setScale(scale)
-        entity.node.alpha = max(0.0, 0.25 + depthForRoad * 0.75)
-        entity.node.zPosition = 20 + depthForRoad * 60
+        entity.node.alpha = 0.30 + entityApproachProgress(for: entity.depth) * 0.70
+        let depthLayer = entityApproachProgress(for: entity.depth) + entityExitProgress(for: entity.depth) * 0.18
+        entity.node.zPosition = entity.kind == .traffic ? 20 + depthLayer * 60 : 24 + depthLayer * 60
     }
 
-    private func updatePlayerPosition() {
+    private func updatePlayerPosition(animated: Bool) {
         let targetX = laneX(for: currentLane, depth: 1)
-        playerShadow.position = CGPoint(x: targetX, y: playerY - 30)
         player.position = CGPoint(x: targetX, y: playerY)
+        playerShadow.position = CGPoint(x: targetX, y: playerY - 18)
         player.setScale(Config.playerScale)
+
+        if !animated {
+            player.removeAllActions()
+            playerShadow.removeAllActions()
+        }
     }
 
     private func movePlayer(by direction: Int) {
         guard !isGameOver else { return }
-
         let nextLane = min(max(currentLane + direction, 0), Config.laneCount - 1)
         guard nextLane != currentLane else { return }
 
         currentLane = nextLane
-        let targetX = laneX(for: currentLane, depth: 1)
+        let action = SKAction.moveTo(x: laneX(for: currentLane, depth: 1), duration: Config.playerMoveDuration)
+        action.timingMode = .easeOut
+        player.run(action, withKey: "laneMove")
 
-        let move = SKAction.moveTo(x: targetX, duration: Config.playerMoveDuration)
-        move.timingMode = .easeOut
-        player.run(move, withKey: "laneMove")
-
-        let shadowMove = SKAction.moveTo(x: targetX, duration: Config.playerMoveDuration)
+        let shadowMove = SKAction.moveTo(x: laneX(for: currentLane, depth: 1), duration: Config.playerMoveDuration)
         shadowMove.timingMode = .easeOut
         playerShadow.run(shadowMove, withKey: "laneMove")
     }
 
     private func spawnEncounter() {
-        if Bool.random() {
-            spawnLaneSplitEncounter(leftLane: 0, rightLane: 1, safeLane: 2)
-        } else {
-            spawnLaneSplitEncounter(leftLane: 1, rightLane: 2, safeLane: 0)
+        let blockedLane = Int.random(in: 0..<Config.laneCount)
+        spawnTraffic(inLane: blockedLane)
+
+        let safeLanes = (0..<Config.laneCount).filter { $0 != blockedLane }
+        if let safeLane = safeLanes.randomElement() {
+            spawnCoin(inLane: safeLane)
+        }
+
+        if let split = riskyLaneSplit(for: blockedLane) {
+            spawnKamote(inLaneSplit: split)
         }
     }
 
-    private func spawnLaneSplitEncounter(leftLane: Int, rightLane: Int, safeLane: Int) {
-        spawnTraffic(inLane: leftLane, depth: Config.entityStartDepth)
-        spawnTraffic(inLane: rightLane, depth: Config.entityStartDepth + 0.03)
-        spawnCoin(inLane: safeLane, depth: Config.entityStartDepth + 0.08)
-        spawnCoin(inLane: safeLane, depth: Config.entityStartDepth + 0.18)
-        spawnKamote(inLaneSplit: (leftLane, rightLane), depth: Config.entityStartDepth + 0.10)
+    private func riskyLaneSplit(for obstacleLane: Int) -> (Int, Int)? {
+        if obstacleLane == 0 { return (0, 1) }
+        if obstacleLane == Config.laneCount - 1 { return (1, 2) }
+        return Bool.random() ? (0, 1) : (1, 2)
     }
 
-    private func spawnTraffic(inLane lane: Int, depth: CGFloat = Config.entityStartDepth) {
-        let vehicleIndex = Int.random(in: 0..<5)
-        let nodeSize: CGSize
-        let bodyColor: SKColor
-
-        switch vehicleIndex {
-        case 0:
-            nodeSize = CGSize(width: 92, height: 104)
-            bodyColor = SKColor(red: 0.90, green: 0.70, blue: 0.18, alpha: 1)
-        case 1:
-            nodeSize = CGSize(width: 116, height: 126)
-            bodyColor = SKColor(red: 0.18, green: 0.55, blue: 0.36, alpha: 1)
-        case 2:
-            nodeSize = CGSize(width: 136, height: 154)
-            bodyColor = SKColor(red: 0.85, green: 0.17, blue: 0.16, alpha: 1)
-        case 3:
-            nodeSize = CGSize(width: 106, height: 122)
-            bodyColor = SKColor(red: 0.86, green: 0.88, blue: 0.86, alpha: 1)
-        default:
-            nodeSize = CGSize(width: 58, height: 92)
-            bodyColor = SKColor(red: 0.16, green: 0.35, blue: 0.85, alpha: 1)
-        }
-
-        let node = SKSpriteNode(color: bodyColor, size: nodeSize)
+    private func spawnTraffic(inLane lane: Int) {
+        let isJeepney = Bool.random()
+        let size = isJeepney ? CGSize(width: 96, height: 88) : CGSize(width: 72, height: 82)
+        let node = SKSpriteNode(color: isJeepney ? SKColor(red: 0.17, green: 0.55, blue: 0.34, alpha: 1) : SKColor(red: 0.85, green: 0.74, blue: 0.21, alpha: 1), size: size)
         node.name = "obstacle"
 
-        let windshield = SKSpriteNode(color: SKColor(white: 0.18, alpha: 0.90), size: CGSize(width: nodeSize.width * 0.68, height: max(nodeSize.height * 0.13, 12)))
-        windshield.position = CGPoint(x: 0, y: nodeSize.height * 0.18)
+        let windshield = SKSpriteNode(color: SKColor(white: 0.18, alpha: 0.9), size: CGSize(width: size.width * 0.70, height: max(10, size.height * 0.14)))
+        windshield.position = CGPoint(x: 0, y: size.height * 0.14)
         node.addChild(windshield)
 
-        if vehicleIndex == 1 {
-            let stripe = SKSpriteNode(color: SKColor(red: 0.95, green: 0.20, blue: 0.20, alpha: 1), size: CGSize(width: nodeSize.width * 0.82, height: 7))
-            stripe.position = CGPoint(x: 0, y: -nodeSize.height * 0.18)
+        if isJeepney {
+            let stripe = SKSpriteNode(color: SKColor(red: 0.95, green: 0.20, blue: 0.20, alpha: 1), size: CGSize(width: size.width * 0.82, height: 7))
+            stripe.position = CGPoint(x: 0, y: -size.height * 0.20)
             node.addChild(stripe)
-        } else if vehicleIndex == 2 {
-            let busBand = SKSpriteNode(color: SKColor(red: 0.96, green: 0.82, blue: 0.22, alpha: 1), size: CGSize(width: nodeSize.width, height: 16))
-            busBand.position = CGPoint(x: 0, y: -nodeSize.height * 0.24)
-            node.addChild(busBand)
-        } else if vehicleIndex == 4 {
-            let rider = SKShapeNode(circleOfRadius: 11)
-            rider.fillColor = SKColor(white: 0.08, alpha: 1)
-            rider.strokeColor = .clear
-            rider.position = CGPoint(x: 0, y: 8)
-            node.addChild(rider)
         } else {
-            let roofLight = SKSpriteNode(color: .white, size: CGSize(width: nodeSize.width * 0.34, height: 6))
-            roofLight.position = CGPoint(x: 0, y: nodeSize.height * 0.30)
+            let roofLight = SKSpriteNode(color: .white, size: CGSize(width: size.width * 0.34, height: 6))
+            roofLight.position = CGPoint(x: 0, y: size.height * 0.28)
             node.addChild(roofLight)
         }
 
-        node.physicsBody = SKPhysicsBody(rectangleOf: nodeSize)
+        node.physicsBody = SKPhysicsBody(rectangleOf: size)
         node.physicsBody?.isDynamic = false
         node.physicsBody?.allowsRotation = false
         node.physicsBody?.categoryBitMask = PhysicsCategory.obstacle
         node.physicsBody?.contactTestBitMask = PhysicsCategory.player
         node.physicsBody?.collisionBitMask = PhysicsCategory.none
 
-        let entity = DepthEntity(node: node, lane: lane, kind: .traffic, depth: depth)
+        let entity = DepthEntity(node: node, lane: lane, kind: .traffic, depth: Config.entityStartDepth)
         activeTraffic.append(entity)
         worldNode.addChild(node)
         applyPerspective(to: entity)
     }
 
-    private func spawnCoin(inLane lane: Int, depth: CGFloat = Config.entityStartDepth) {
-        let node = SKShapeNode(circleOfRadius: 13)
+    private func spawnCoin(inLane lane: Int) {
+        let node = SKShapeNode(circleOfRadius: 10)
         node.fillColor = SKColor.systemYellow
         node.strokeColor = SKColor(red: 0.90, green: 0.74, blue: 0.08, alpha: 1)
         node.lineWidth = 2
@@ -775,21 +658,21 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         shine.position = CGPoint(x: -3, y: 4)
         node.addChild(shine)
 
-        node.physicsBody = SKPhysicsBody(circleOfRadius: 13)
+        node.physicsBody = SKPhysicsBody(circleOfRadius: 10)
         node.physicsBody?.isDynamic = false
         node.physicsBody?.allowsRotation = false
         node.physicsBody?.categoryBitMask = PhysicsCategory.coin
         node.physicsBody?.contactTestBitMask = PhysicsCategory.player
         node.physicsBody?.collisionBitMask = PhysicsCategory.none
 
-        let entity = DepthEntity(node: node, lane: lane, kind: .coin, depth: depth)
+        let entity = DepthEntity(node: node, lane: lane, kind: .coin, depth: Config.entityStartDepth)
         activeCoins.append(entity)
         worldNode.addChild(node)
         applyPerspective(to: entity)
     }
 
-    private func spawnKamote(inLaneSplit split: (Int, Int), depth: CGFloat = Config.entityStartDepth) {
-        let node = SKShapeNode(ellipseOf: CGSize(width: 34, height: 22))
+    private func spawnKamote(inLaneSplit split: (Int, Int)) {
+        let node = SKShapeNode(ellipseOf: CGSize(width: 26, height: 16))
         node.fillColor = SKColor(red: 0.57, green: 0.26, blue: 0.74, alpha: 1)
         node.strokeColor = SKColor(red: 0.36, green: 0.12, blue: 0.52, alpha: 1)
         node.lineWidth = 2
@@ -797,21 +680,20 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
 
         let label = SKLabelNode(text: "K")
         label.fontName = "HelveticaNeue-Bold"
-        label.fontSize = 16
+        label.fontSize = 13
         label.fontColor = .white
         label.verticalAlignmentMode = .center
         label.horizontalAlignmentMode = .center
         node.addChild(label)
 
-        node.physicsBody = SKPhysicsBody(rectangleOf: CGSize(width: 34, height: 22))
+        node.physicsBody = SKPhysicsBody(rectangleOf: CGSize(width: 26, height: 16))
         node.physicsBody?.isDynamic = false
         node.physicsBody?.allowsRotation = false
         node.physicsBody?.categoryBitMask = PhysicsCategory.kamote
         node.physicsBody?.contactTestBitMask = PhysicsCategory.player
         node.physicsBody?.collisionBitMask = PhysicsCategory.none
 
-        let gapLane = min(split.0, split.1)
-        let entity = DepthEntity(node: node, lane: gapLane, kind: .kamote, depth: depth)
+        let entity = DepthEntity(node: node, lane: split.0, kind: .kamote, depth: Config.entityStartDepth)
         activeKamote.append(entity)
         worldNode.addChild(node)
         applyPerspective(to: entity)
@@ -827,7 +709,6 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     private func collectKamote(node: SKNode) {
         deactivateAndRemove(node)
         kamoteCount += 1
-        kamoteForFutureBar += 1
         updateHUDText()
         activeKamote.removeAll { $0.node === node }
     }
@@ -841,21 +722,9 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         player.removeAllActions()
         playerShadow.removeAllActions()
 
-        for entity in activeTraffic { entity.node.physicsBody = nil }
-        for entity in activeCoins { entity.node.physicsBody = nil }
-        for entity in activeKamote { entity.node.physicsBody = nil }
-
-        gameOverBackdrop?.removeFromParent()
-        gameOverLabel?.removeFromParent()
-        restartLabel?.removeFromParent()
-
-        let backdrop = SKShapeNode(rectOf: CGSize(width: size.width * 0.62, height: 220), cornerRadius: 18)
-        backdrop.fillColor = SKColor(white: 0, alpha: 0.42)
-        backdrop.strokeColor = .clear
-        backdrop.position = CGPoint(x: size.width * 0.5, y: size.height * 0.49)
-        backdrop.zPosition = 248
-        hudNode.addChild(backdrop)
-        gameOverBackdrop = backdrop
+        for entity in activeTraffic { deactivate(entity) }
+        for entity in activeCoins { deactivate(entity) }
+        for entity in activeKamote { deactivate(entity) }
 
         let label = SKLabelNode(text: "Game Over")
         label.fontName = "HelveticaNeue-Bold"
@@ -869,39 +738,39 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         let restart = SKLabelNode(text: "Tap to Restart")
         restart.fontName = "HelveticaNeue-Medium"
         restart.fontSize = 22
-        restart.fontColor = SKColor(white: 1.0, alpha: 0.9)
+        restart.fontColor = SKColor(white: 1, alpha: 0.92)
         restart.position = CGPoint(x: size.width * 0.5, y: size.height * 0.42)
         restart.zPosition = 250
         hudNode.addChild(restart)
         restartLabel = restart
     }
 
+    private func restartGame() {
+        rebuildScene(resetRun: true)
+    }
+
     func didBegin(_ contact: SKPhysicsContact) {
         guard !isGameOver else { return }
 
-        let bodyA = contact.bodyA
-        let bodyB = contact.bodyB
+        let a = contact.bodyA
+        let b = contact.bodyB
 
         func isPair(_ first: UInt32, _ second: UInt32) -> Bool {
-            (bodyA.categoryBitMask == first && bodyB.categoryBitMask == second)
-                || (bodyA.categoryBitMask == second && bodyB.categoryBitMask == first)
+            (a.categoryBitMask == first && b.categoryBitMask == second)
+            || (a.categoryBitMask == second && b.categoryBitMask == first)
         }
 
         if isPair(PhysicsCategory.player, PhysicsCategory.obstacle) {
             showGameOver()
         } else if isPair(PhysicsCategory.player, PhysicsCategory.coin) {
-            if let node = bodyA.node?.name == "coin" ? bodyA.node : bodyB.node, didPickNode(node, expectedName: "coin") {
+            if let node = a.node?.name == "coin" ? a.node : b.node, didPickNode(node, expectedName: "coin") {
                 collectCoin(node: node)
             }
         } else if isPair(PhysicsCategory.player, PhysicsCategory.kamote) {
-            if let node = bodyA.node?.name == "kamote" ? bodyA.node : bodyB.node, didPickNode(node, expectedName: "kamote") {
+            if let node = a.node?.name == "kamote" ? a.node : b.node, didPickNode(node, expectedName: "kamote") {
                 collectKamote(node: node)
             }
         }
-    }
-
-    private func restartGame() {
-        rebuildScene(resetRun: true)
     }
 
     #if os(iOS) || os(tvOS)
@@ -910,7 +779,6 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
             restartGame()
             return
         }
-
         touchConsumedSwipe = false
         touchStartPoint = touches.first?.location(in: self)
     }

@@ -23,17 +23,18 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         static let roadTopWidthRatio: CGFloat = 0.66
         static let roadBottomWidthRatio: CGFloat = 1.24
         static let horizonYRatio: CGFloat = 0.64
-        static let playerYRatio: CGFloat = 0.18
+        static let playerYRatio: CGFloat = 0.15
 
-        static let depthSpeed: CGFloat = 0.27
-        static let entityStartDepth: CGFloat = 0.02
-        static let passedPlayerDepth: CGFloat = 1.0
-        static let entityRemovalDepth: CGFloat = 1.08
+        // World-depth units: larger values are farther ahead of the camera.
+        static let depthSpeed: CGFloat = 980
+        static let entityStartDepth: CGFloat = 2400
+        static let passedPlayerDepth: CGFloat = -80
+        static let entityRemovalDepth: CGFloat = -260
 
         static let spawnInterval: TimeInterval = 0.82
         static let swipeThreshold: CGFloat = 30
         static let playerMoveDuration: TimeInterval = 0.11
-        static let playerScale: CGFloat = 1.48
+        static let playerScale: CGFloat = 1.54
     }
 
     private enum EntityKind {
@@ -75,12 +76,6 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         }
     }
 
-    class func newGameScene() -> GameScene {
-        let scene = GameScene(size: CGSize(width: 1170, height: 2532))
-        scene.scaleMode = .aspectFill
-        return scene
-    }
-
     private let worldNode = SKNode()
     private let hudNode = SKNode()
 
@@ -118,6 +113,9 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     private var touchConsumedSwipe = false
     private var lastUpdateTime: TimeInterval = 0
     private var lastSpawnTime: TimeInterval = 0
+    #if DEBUG
+    private var debugMotionFrameCount: Int = 0
+    #endif
 
     override func didMove(to view: SKView) {
         super.didMove(to: view)
@@ -154,6 +152,13 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         updateEntities(&activeCoins, depthAdvance: depthAdvance)
         updateEntities(&activeKamote, depthAdvance: depthAdvance)
 
+        #if DEBUG
+        debugMotionFrameCount += 1
+        if debugMotionFrameCount % 30 == 0, let sample = activeTraffic.first {
+            print("[KamoteDash] traffic depth=\(sample.depth) y=\(sample.node.position.y) scale=\(sample.node.xScale)")
+        }
+        #endif
+
         if currentTime - lastSpawnTime >= Config.spawnInterval {
             lastSpawnTime = currentTime
             spawnEncounter()
@@ -171,6 +176,9 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
             touchConsumedSwipe = false
             lastUpdateTime = 0
             lastSpawnTime = 0
+            #if DEBUG
+            debugMotionFrameCount = 0
+            #endif
         }
 
         gameOverLabel?.removeFromParent()
@@ -480,13 +488,11 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func layoutHUD() {
+        // The scene's size is kept in sync with the SKView's point size
+        // (see GameViewController), so no scaling conversion is needed here.
         let safeTop: CGFloat
         #if os(iOS) || os(tvOS)
-        if let view {
-            safeTop = view.safeAreaInsets.top * (size.height / max(view.bounds.height, 1))
-        } else {
-            safeTop = 0
-        }
+        safeTop = view?.safeAreaInsets.top ?? 0
         #else
         safeTop = 0
         #endif
@@ -503,12 +509,12 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func roadWidth(at depth: CGFloat) -> CGFloat {
-        let t = easedDepth(depth)
+        let t = min(max(depth, 0), 1)
         return roadTopWidth + (roadBottomWidth - roadTopWidth) * t
     }
 
     private func y(for depth: CGFloat) -> CGFloat {
-        let t = easedDepth(depth)
+        let t = min(max(depth, 0), 1)
         return horizonY + (playerY - horizonY) * t
     }
 
@@ -536,22 +542,55 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         dividerX(for: min(leftLane + 1, Config.laneCount - 1), depth: depth)
     }
 
-    private func easedDepth(_ depth: CGFloat) -> CGFloat {
-        let clamped = min(max(depth, 0), 1)
-        return clamped * clamped * (3 - 2 * clamped)
+    private func entityProgress(for depth: CGFloat) -> CGFloat {
+        let span = Config.entityStartDepth - Config.entityRemovalDepth
+        guard span > 0 else { return 1 }
+        return (Config.entityStartDepth - depth) / span
     }
 
-    private func perspectiveScale(for depth: CGFloat) -> CGFloat {
-        0.42 + easedDepth(depth) * 1.05
+    private func entityRoadWidth(at depth: CGFloat) -> CGFloat {
+        let t = min(max(entityProgress(for: depth), 0), 1)
+        return roadTopWidth + (roadBottomWidth - roadTopWidth) * t
+    }
+
+    private func entityLaneX(for lane: Int, depth: CGFloat) -> CGFloat {
+        let width = entityRoadWidth(at: depth)
+        let left = (size.width - width) * 0.5
+        let laneWidth = width / CGFloat(Config.laneCount)
+        return left + laneWidth * (CGFloat(lane) + 0.5)
+    }
+
+    private func entityDividerX(for divider: Int, depth: CGFloat) -> CGFloat {
+        let width = entityRoadWidth(at: depth)
+        let left = (size.width - width) * 0.5
+        let laneWidth = width / CGFloat(Config.laneCount)
+        return left + laneWidth * CGFloat(divider)
+    }
+
+    private func entityRoadsideX(isLeft: Bool, depth: CGFloat) -> CGFloat {
+        let width = entityRoadWidth(at: depth)
+        let left = (size.width - width) * 0.5
+        return isLeft ? left - 36 : left + width + 36
     }
 
     private func entityY(for depth: CGFloat) -> CGFloat {
-        if depth <= 1 {
-            return y(for: depth)
+        if depth >= 0 {
+            let t = 1 - min(depth, Config.entityStartDepth) / Config.entityStartDepth
+            return horizonY + (playerY - horizonY) * t
         }
 
-        let overshoot = depth - 1
-        return playerY - overshoot * size.height * 1.35
+        let t = min(max((-depth) / abs(Config.entityRemovalDepth), 0), 1)
+        return playerY - t * (size.height * 0.88)
+    }
+
+    private func entityScale(for depth: CGFloat) -> CGFloat {
+        let t = min(max(entityProgress(for: depth), 0), 1)
+        return 0.24 + t * 0.30
+    }
+
+    private func perspectiveScale(for depth: CGFloat) -> CGFloat {
+        let t = min(max(depth, 0), 1)
+        return 0.42 + t * 1.05
     }
 
     private func trapezoidPath(bottomLeft: CGPoint, bottomRight: CGPoint, topRight: CGPoint, topLeft: CGPoint) -> CGPath {
@@ -599,16 +638,16 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     private func updateEntities(_ entities: inout [DepthEntity], depthAdvance: CGFloat) {
         for index in entities.indices.reversed() {
             let entity = entities[index]
-            entity.depth += depthAdvance
+            entity.depth -= depthAdvance
 
-            if entity.depth >= Config.entityRemovalDepth {
+            if entity.depth <= Config.entityRemovalDepth {
                 deactivate(entity)
                 entity.node.removeFromParent()
                 entities.remove(at: index)
                 continue
             }
 
-            if entity.depth >= Config.passedPlayerDepth, !entity.hasPassedPlayer {
+            if entity.depth <= Config.passedPlayerDepth, !entity.hasPassedPlayer {
                 entity.hasPassedPlayer = true
                 deactivate(entity)
             }
@@ -637,26 +676,25 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func applyPerspective(to entity: DepthEntity) {
-        let depthForRoad = min(max(entity.depth, 0), 1)
         let yPosition = entityY(for: entity.depth)
         let xPosition: CGFloat
 
         switch entity.kind {
         case .traffic, .coin:
-            xPosition = laneX(for: entity.lane, depth: depthForRoad)
+            xPosition = entityLaneX(for: entity.lane, depth: entity.depth)
         case .kamote:
-            xPosition = laneSplitX(leftLane: entity.lane, depth: depthForRoad)
+            xPosition = entityDividerX(for: min(entity.lane + 1, Config.laneCount - 1), depth: entity.depth)
         }
 
-        let scale = perspectiveScale(for: depthForRoad)
+        let scale = entityScale(for: entity.depth)
         entity.node.position = CGPoint(x: xPosition, y: yPosition)
         entity.node.setScale(scale)
-        entity.node.alpha = max(0.0, 0.25 + depthForRoad * 0.75)
-        entity.node.zPosition = 20 + depthForRoad * 60
+        entity.node.alpha = max(0.0, 0.25 + min(max(entityProgress(for: entity.depth), 0), 1) * 0.75)
+        entity.node.zPosition = 20 + min(max(entityProgress(for: entity.depth), 0), 1) * 60
     }
 
     private func updatePlayerPosition() {
-        let targetX = laneX(for: currentLane, depth: 1)
+        let targetX = entityLaneX(for: currentLane, depth: 0)
         playerShadow.position = CGPoint(x: targetX, y: playerY - 30)
         player.position = CGPoint(x: targetX, y: playerY)
         player.setScale(Config.playerScale)
@@ -669,7 +707,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         guard nextLane != currentLane else { return }
 
         currentLane = nextLane
-        let targetX = laneX(for: currentLane, depth: 1)
+        let targetX = entityLaneX(for: currentLane, depth: 0)
 
         let move = SKAction.moveTo(x: targetX, duration: Config.playerMoveDuration)
         move.timingMode = .easeOut
@@ -690,10 +728,10 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
 
     private func spawnLaneSplitEncounter(leftLane: Int, rightLane: Int, safeLane: Int) {
         spawnTraffic(inLane: leftLane, depth: Config.entityStartDepth)
-        spawnTraffic(inLane: rightLane, depth: Config.entityStartDepth + 0.03)
-        spawnCoin(inLane: safeLane, depth: Config.entityStartDepth + 0.08)
-        spawnCoin(inLane: safeLane, depth: Config.entityStartDepth + 0.18)
-        spawnKamote(inLaneSplit: (leftLane, rightLane), depth: Config.entityStartDepth + 0.10)
+        spawnTraffic(inLane: rightLane, depth: Config.entityStartDepth - 120)
+        spawnCoin(inLane: safeLane, depth: Config.entityStartDepth - 210)
+        spawnCoin(inLane: safeLane, depth: Config.entityStartDepth - 330)
+        spawnKamote(inLaneSplit: (leftLane, rightLane), depth: Config.entityStartDepth - 180)
     }
 
     private func spawnTraffic(inLane lane: Int, depth: CGFloat = Config.entityStartDepth) {
@@ -703,19 +741,19 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
 
         switch vehicleIndex {
         case 0:
-            nodeSize = CGSize(width: 92, height: 104)
+            nodeSize = CGSize(width: 78, height: 88)
             bodyColor = SKColor(red: 0.90, green: 0.70, blue: 0.18, alpha: 1)
         case 1:
-            nodeSize = CGSize(width: 116, height: 126)
+            nodeSize = CGSize(width: 98, height: 108)
             bodyColor = SKColor(red: 0.18, green: 0.55, blue: 0.36, alpha: 1)
         case 2:
-            nodeSize = CGSize(width: 136, height: 154)
+            nodeSize = CGSize(width: 116, height: 128)
             bodyColor = SKColor(red: 0.85, green: 0.17, blue: 0.16, alpha: 1)
         case 3:
-            nodeSize = CGSize(width: 106, height: 122)
+            nodeSize = CGSize(width: 90, height: 104)
             bodyColor = SKColor(red: 0.86, green: 0.88, blue: 0.86, alpha: 1)
         default:
-            nodeSize = CGSize(width: 58, height: 92)
+            nodeSize = CGSize(width: 50, height: 76)
             bodyColor = SKColor(red: 0.16, green: 0.35, blue: 0.85, alpha: 1)
         }
 
@@ -760,7 +798,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func spawnCoin(inLane lane: Int, depth: CGFloat = Config.entityStartDepth) {
-        let node = SKShapeNode(circleOfRadius: 13)
+        let node = SKShapeNode(circleOfRadius: 11)
         node.fillColor = SKColor.systemYellow
         node.strokeColor = SKColor(red: 0.90, green: 0.74, blue: 0.08, alpha: 1)
         node.lineWidth = 2
@@ -772,7 +810,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         shine.position = CGPoint(x: -3, y: 4)
         node.addChild(shine)
 
-        node.physicsBody = SKPhysicsBody(circleOfRadius: 13)
+        node.physicsBody = SKPhysicsBody(circleOfRadius: 11)
         node.physicsBody?.isDynamic = false
         node.physicsBody?.allowsRotation = false
         node.physicsBody?.categoryBitMask = PhysicsCategory.coin
@@ -786,7 +824,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func spawnKamote(inLaneSplit split: (Int, Int), depth: CGFloat = Config.entityStartDepth) {
-        let node = SKShapeNode(ellipseOf: CGSize(width: 34, height: 22))
+        let node = SKShapeNode(ellipseOf: CGSize(width: 28, height: 18))
         node.fillColor = SKColor(red: 0.57, green: 0.26, blue: 0.74, alpha: 1)
         node.strokeColor = SKColor(red: 0.36, green: 0.12, blue: 0.52, alpha: 1)
         node.lineWidth = 2
@@ -800,7 +838,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate {
         label.horizontalAlignmentMode = .center
         node.addChild(label)
 
-        node.physicsBody = SKPhysicsBody(rectangleOf: CGSize(width: 34, height: 22))
+        node.physicsBody = SKPhysicsBody(rectangleOf: CGSize(width: 28, height: 18))
         node.physicsBody?.isDynamic = false
         node.physicsBody?.allowsRotation = false
         node.physicsBody?.categoryBitMask = PhysicsCategory.kamote
